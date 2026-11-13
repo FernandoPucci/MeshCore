@@ -22,6 +22,10 @@
 #include "../AbstractUITask.h"
 #include "../NodePrefs.h"
 
+#ifdef COMPANION_DIAGNOSTICS
+  #include "../diagnostics/DiagnosticData.h"
+#endif
+
 #ifdef UI_NO_DISCOVER_SCREEN
   #error "UI_NO_DISCOVER_SCREEN is obsolete - use -D UI_DISCOVER_SCREEN=0 instead"
 #endif
@@ -57,6 +61,9 @@ class UITask : public AbstractUITask {
 #endif
   unsigned long _next_refresh, _auto_off;
   NodePrefs* _node_prefs;
+#ifdef COMPANION_DIAGNOSTICS
+  DiagnosticDataSource _diagnostics;
+#endif
   char _alert[80];
   unsigned long _alert_expiry;
   int _msgcount;
@@ -95,6 +102,9 @@ public:
     curr = NULL;
   }
   void begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs);
+#ifdef COMPANION_DIAGNOSTICS
+  void getDiagnosticData(DiagnosticData& data);
+#endif
 
   void gotoHomeScreen() { setCurrScreen(home); }
   void showAlert(const char* text, int duration_millis);

@@ -102,6 +102,11 @@ class HomeScreen : public UIScreen {
 #if UI_DISCOVER_SCREEN
     DISCOVERY,
 #endif
+#ifdef COMPANION_DIAGNOSTICS
+    DIAG_STATUS,
+    DIAG_RADIO,
+    DIAG_NETWORK,
+#endif
 #ifndef UI_NO_HIBERNATE
     SHUTDOWN,
 #endif
@@ -121,6 +126,143 @@ class HomeScreen : public UIScreen {
   uint32_t disc_nodes_count = 0;
   uint32_t discovery_req_time = 0;
   bool discovery_disp_names = true; // by default desplay names if available (removes SNR_O)
+#endif
+
+#ifdef COMPANION_DIAGNOSTICS
+  DiagnosticData _diagnostic_data;
+
+  bool isDiagnosticPage() const {
+    return _page == HomePage::DIAG_STATUS ||
+           _page == HomePage::DIAG_RADIO ||
+           _page == HomePage::DIAG_NETWORK;
+  }
+
+  const char* diagnosticTitle() const {
+    switch (_page) {
+      case HomePage::DIAG_STATUS:  return "STATUS          01/03";
+      case HomePage::DIAG_RADIO:   return "RADIO           02/03";
+      case HomePage::DIAG_NETWORK: return "NETWORK         03/03";
+      default:                     return "";
+    }
+  }
+
+  void refreshDiagnosticData() {
+    _task->getDiagnosticData(_diagnostic_data);
+  }
+
+  void renderBatteryBar(DisplayDriver& display, uint8_t percent, bool valid) {
+    const int x = 3;
+    const int y = 30;
+    const int w = display.width() - 6;
+    const int h = 8;
+
+    display.setColor(UIColor::secondary_txt);
+    display.drawRect(x, y, w, h);
+    if (valid && percent > 0) {
+      int fill_width = ((w - 2) * percent) / 100;
+      display.setColor(UIColor::primary_txt);
+      display.fillRect(x + 1, y + 1, fill_width, h - 2);
+    }
+  }
+
+  void formatUptime(char* dest, size_t dest_size) const {
+    uint64_t total_minutes = _diagnostic_data.uptime_seconds / 60;
+    uint32_t hours = (uint32_t)(total_minutes / 60);
+    uint32_t minutes = (uint32_t)(total_minutes % 60);
+    snprintf(dest, dest_size, "UP %luh %02lum", (unsigned long)hours, (unsigned long)minutes);
+  }
+
+  void renderDiagnosticStatus(DisplayDriver& display) {
+    refreshDiagnosticData();
+
+    char tmp[40];
+    display.setTextSize(1);
+    display.setColor(UIColor::primary_txt);
+    if (_diagnostic_data.battery_valid) {
+      uint16_t tenths = (_diagnostic_data.battery_millivolts + 5) / 10;
+      snprintf(tmp, sizeof(tmp), "BAT %u%% %u.%02uV", _diagnostic_data.battery_percent,
+               tenths / 100, tenths % 100);
+    } else {
+      strcpy(tmp, "BAT -- --V");
+    }
+    display.setCursor(0, 20);
+    display.print(tmp);
+    renderBatteryBar(display, _diagnostic_data.battery_percent, _diagnostic_data.battery_valid);
+
+    formatUptime(tmp, sizeof(tmp));
+    display.setCursor(0, 42);
+    display.print(tmp);
+
+    const char* ble_state = !_diagnostic_data.ble_enabled ? "OFF DISABLED" :
+                            (_diagnostic_data.ble_connected ? "ON CONNECTED" : "ON WAITING");
+    snprintf(tmp, sizeof(tmp), "BLE %s", ble_state);
+    display.setCursor(0, 53);
+    display.print(tmp);
+  }
+
+  void renderDiagnosticRadio(DisplayDriver& display) {
+    refreshDiagnosticData();
+
+    char tmp[40];
+    display.setTextSize(1);
+    display.setColor(UIColor::primary_txt);
+
+    if (_diagnostic_data.radio_metrics_valid) {
+      snprintf(tmp, sizeof(tmp), "RSSI %d dBm", _diagnostic_data.last_rssi_dbm);
+    } else {
+      strcpy(tmp, "RSSI --");
+    }
+    display.setCursor(0, 20);
+    display.print(tmp);
+
+    if (_diagnostic_data.radio_metrics_valid) {
+      snprintf(tmp, sizeof(tmp), "SNR %.1f dB", _diagnostic_data.last_snr_db);
+    } else {
+      strcpy(tmp, "SNR --");
+    }
+    display.setCursor(0, 31);
+    display.print(tmp);
+
+    if (_diagnostic_data.frequency_valid) {
+      snprintf(tmp, sizeof(tmp), "FREQ %.3f MHz", _diagnostic_data.frequency_mhz);
+    } else {
+      strcpy(tmp, "FREQ --");
+    }
+    display.setCursor(0, 42);
+    display.print(tmp);
+
+    if (_diagnostic_data.tx_power_valid) {
+      snprintf(tmp, sizeof(tmp), "TX POWER %d dBm", _diagnostic_data.tx_power_dbm);
+    } else {
+      strcpy(tmp, "TX POWER --");
+    }
+    display.setCursor(0, 53);
+    display.print(tmp);
+  }
+
+  void renderDiagnosticNetwork(DisplayDriver& display) {
+    refreshDiagnosticData();
+
+    char tmp[40];
+    display.setTextSize(1);
+    display.setColor(UIColor::primary_txt);
+
+    snprintf(tmp, sizeof(tmp), "RX PACKETS %lu", (unsigned long)_diagnostic_data.packets_rx);
+    display.setCursor(0, 20);
+    display.print(tmp);
+
+    snprintf(tmp, sizeof(tmp), "TX PACKETS %lu", (unsigned long)_diagnostic_data.packets_tx);
+    display.setCursor(0, 31);
+    display.print(tmp);
+
+    snprintf(tmp, sizeof(tmp), "CONTACTS %u", _diagnostic_data.known_contacts);
+    display.setCursor(0, 42);
+    display.print(tmp);
+
+    display.setColor(UIColor::secondary_txt);
+    display.setCursor(0, 53);
+    display.print("COUNTERS SINCE BOOT");
+  }
 #endif
 
   void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts) {
@@ -252,16 +394,25 @@ public:
     display.setColor(UIColor::title_bkg);
     display.fillRect(0, 0, display.width(), 12);
     char tmp[80];
-    // node name
     display.setTextSize(1);
     display.setColor(UIColor::title_txt);
-    char filtered_name[sizeof(_node_prefs->node_name)];
-    display.translateUTF8ToBlocks(filtered_name, _node_prefs->node_name, sizeof(filtered_name));
-    display.setCursor(0, 2);
-    display.print(filtered_name);
+#ifdef COMPANION_DIAGNOSTICS
+    if (isDiagnosticPage()) {
+      display.setCursor(0, 2);
+      display.print(diagnosticTitle());
+    } else {
+#else
+    {
+#endif
+      // node name
+      char filtered_name[sizeof(_node_prefs->node_name)];
+      display.translateUTF8ToBlocks(filtered_name, _node_prefs->node_name, sizeof(filtered_name));
+      display.setCursor(0, 2);
+      display.print(filtered_name);
 
-    // battery voltage
-    renderBatteryIndicator(display, _task->getBattMilliVolts());
+      // battery voltage
+      renderBatteryIndicator(display, _task->getBattMilliVolts());
+    }
 
     // curr page indicator
     if (UIColor::title_bkg == UIColor::window_bkg) {
@@ -541,6 +692,14 @@ public:
         display.drawTextCentered(display.width() / 2, y, "discover: " PRESS_LABEL);
       }
 #endif
+#ifdef COMPANION_DIAGNOSTICS
+    } else if (_page == HomePage::DIAG_STATUS) {
+      renderDiagnosticStatus(display);
+    } else if (_page == HomePage::DIAG_RADIO) {
+      renderDiagnosticRadio(display);
+    } else if (_page == HomePage::DIAG_NETWORK) {
+      renderDiagnosticNetwork(display);
+#endif
 #ifndef UI_NO_HIBERNATE
     } else if (_page == HomePage::SHUTDOWN) {
       display.setColor(UIColor::corp_blue);
@@ -735,6 +894,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #endif
 
   _node_prefs = node_prefs;
+#ifdef COMPANION_DIAGNOSTICS
+  _diagnostics.begin();
+#endif
 
   if (_display != NULL) {
     _display->turnOn();
@@ -758,6 +920,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   msg_preview = new MsgPreviewScreen(this, &rtc_clock);
   setCurrScreen(splash);
 }
+
+#ifdef COMPANION_DIAGNOSTICS
+void UITask::getDiagnosticData(DiagnosticData& data) {
+  _diagnostics.capture(data, *_node_prefs, the_mesh, *_interfaceManager);
+}
+#endif
 
 void UITask::showAlert(const char* text, int duration_millis) {
   strcpy(_alert, text);
@@ -921,6 +1089,9 @@ bool UITask::isButtonPressed() const {
 }
 
 void UITask::loop() {
+#ifdef COMPANION_DIAGNOSTICS
+  _diagnostics.tick();
+#endif
   char c = 0;
 #if UI_HAS_JOYSTICK
   int ev = user_btn.check();
