@@ -90,6 +90,15 @@ public:
     return false; 
   }
 
+  bool isBluetoothConnected() {
+    for(auto iface : _interfaces){
+      if(iface.instance && iface.type == InterfaceType::Bluetooth){
+        return iface.instance->isConnected();
+      }
+    }
+    return false;
+  }
+
   // enable all interfaces
   void enable() override {
     _enabled = true;
